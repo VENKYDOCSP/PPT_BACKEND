@@ -2,8 +2,12 @@ const express = require("express");
 const pdfParse = require("pdf-parse");
 const formidable = require("formidable");
 const cors = require("cors");
+const multer = require("multer");
+// const pptxParser = require("pptx-parser");
+const path = require("path");
 const fs = require("fs/promises");
-const axios = require("axios"); 
+const axios = require("axios");
+const generateGoogleSlidesFromTemplate = require("./generateGoogleSlidesFromTemplate");
 
 const app = express();
 app.use(cors({
@@ -13,6 +17,8 @@ app.use(cors({
 }));
 
 const PORT = 5000;
+
+const upload = multer({ dest: "uploads/" });
 
 const processTextWithGemini = async (text) => {
     try {
@@ -37,7 +43,7 @@ const processTextWithGemini = async (text) => {
             { headers: { "Content-Type": "application/json" } }
         );
 
-        console.log("Response from Gemini API:", response.data);
+        console.log("Response==>", response.data);
 
         if (response.data.candidates && response.data.candidates.length > 0) {
             let rawText = response.data.candidates[0].content.parts[0].text;
@@ -61,14 +67,15 @@ const processTextWithGemini = async (text) => {
     }
 };
 
+let structuredContent = [];
+
 app.post("/extract-pdf", async (req, res) => {
     try {
-        console.log("Received request to extract text from PDF");
 
         const form = new formidable.IncomingForm();
         form.parse(req, async (err, fields, files) => {
             if (err) {
-                console.error("Error parsing form:", err);
+                console.error("Error in line 78 ===>", err);
                 return res.status(500).json({ error: "Failed to parse form data" });
             }
 
@@ -82,16 +89,38 @@ app.post("/extract-pdf", async (req, res) => {
 
             const structuredResult = await processTextWithGemini(data.text);
 
+            structuredContent.push(structuredResult);
+
             res.status(200).json({
                 extractedText: data.text,
                 structuredContent: structuredResult
             });
         });
     } catch (error) {
-        console.error("Error processing PDF:", error);
+        console.error("Error in Line 100 ===>", error);
         res.status(500).json({ error: "Failed to process PDF" });
     }
 });
+
+
+app.post("/upload-template-and-generate", upload.single("ppt"), async (req, res) => {
+    try {
+        const pptPath = req.file.path;
+
+
+        const slideUrl = await generateGoogleSlidesFromTemplate(pptPath, structuredContent);
+
+
+        // fs.unlinkSync(pptPath); 
+
+        console.log("Google Slides URL", slideUrl);
+        res.json({ presentationUrl: slideUrl });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to generate presentation" });
+    }
+});
+
 
 app.listen(PORT, () => {
     console.log(`Server is running on ${PORT}`);
