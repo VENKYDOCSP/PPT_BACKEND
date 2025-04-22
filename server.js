@@ -107,8 +107,10 @@ app.post("/upload-template-and-generate", upload.single("ppt"), async (req, res)
     try {
         const pptPath = req.file.path;
 
+        const structuredContent = req.body.structuredContent;
 
-        const slideUrl = await generateGoogleSlidesFromTemplate(pptPath, structuredContent);
+
+        const slideUrl = await generateGoogleSlidesFromTemplate(pptPath, JSON.parse(structuredContent));
 
 
         // fs.unlinkSync(pptPath); 

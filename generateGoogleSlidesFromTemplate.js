@@ -37,107 +37,110 @@ const generateGoogleSlidesFromTemplate = async (pptFilePath, structuredContent) 
 
     const copied = await drive.files.copy({
         fileId: uploadedFileId,
-        requestBody: {
-            name: "Generated PPT",
-        },
+        requestBody: { name: "Generated PPT" },
     });
 
     const presentationId = copied.data.id;
 
     await drive.permissions.create({
         fileId: presentationId,
-        requestBody: {
-            role: "reader",
-            type: "anyone",
-        },
+        requestBody: { role: "reader", type: "anyone" },
     });
 
     const presentation = await slides.presentations.get({ presentationId });
-    const firstSlideId = presentation?.data?.slides?.[0]?.objectId;
+    const allSlides = presentation.data.slides;
 
-    if (!firstSlideId) {
-       console.log("Slide not found");
-    }
+    const slidesToUpdate = allSlides.slice(0, structuredContent.length);
 
-    const requests = [];
-    const slideIds = [];
-
-    structuredContent?.[0]?.forEach((slide, index) => {
-        const newSlideId = `generated_slide_${index}`;
-        slideIds.push(newSlideId);
+    const updateSlideContent = async (slide, slideData, index) => {
+        const slideId = slide.objectId;
 
 
-        requests.push({
-            duplicateObject: {
-                objectId: firstSlideId,
-                objectIds: {
-                    [firstSlideId]: newSlideId,
-                },
-            },
-        });
-    });
+        const deleteRequests = slide.pageElements.map(el => ({
+            deleteObject: { objectId: el.objectId },
+        }));
 
-    await slides.presentations?.batchUpdate({
-        presentationId,
-        requestBody: { requests },
-    });
-
-    for (let i = 0; i < structuredContent?.[0]?.length; i++) {
-        const slide = structuredContent?.[0][i];
-        const slideId = slideIds[i];
-
-        const updateRequests = [];
-
-
-        updateRequests.push({
-            replaceAllText: {
-                containsText: {
-                    text: "{{title}}",
-                    matchCase: true,
-                },
-                replaceText: slide?.title,
-                pageObjectIds: [slideId]
-            },
-        });
-
-
-        updateRequests.push({
-            replaceAllText: {
-                containsText: {
-                    text: "{{content}}",
-                    matchCase: true,
-                },
-                replaceText: slide?.content?.map(line => `• ${line}`).join("\n"),
-                pageObjectIds: [slideId]
-            },
-        });
-
-        await slides?.presentations?.batchUpdate({
+        await slides.presentations.batchUpdate({
             presentationId,
-            requestBody: { requests: updateRequests },
+            requestBody: { requests: deleteRequests },
         });
+
+
+        const titleBoxId = `title_box_${index}`;
+        const contentBoxId = `content_box_${index}`;
+
+        const requests = [
+            {
+                createShape: {
+                    objectId: titleBoxId,
+                    shapeType: "TEXT_BOX",
+                    elementProperties: {
+                        pageObjectId: slideId,
+                        size: { height: { magnitude: 80, unit: "PT" }, width: { magnitude: 600, unit: "PT" } },
+                        transform: {
+                            scaleX: 1, scaleY: 1, translateX: 50, translateY: 50, unit: "PT",
+                        },
+                    },
+                },
+            },
+            {
+                insertText: { objectId: titleBoxId, text: slideData.title },
+            },
+            {
+                updateTextStyle: {
+                    objectId: titleBoxId,
+                    style: { fontSize: { magnitude: 24, unit: "PT" }, bold: true },
+                    fields: "fontSize,bold",
+                },
+            },
+            {
+                createShape: {
+                    objectId: contentBoxId,
+                    shapeType: "TEXT_BOX",
+                    elementProperties: {
+                        pageObjectId: slideId,
+                        size: { height: { magnitude: 300, unit: "PT" }, width: { magnitude: 600, unit: "PT" } },
+                        transform: {
+                            scaleX: 1, scaleY: 1, translateX: 50, translateY: 150, unit: "PT",
+                        },
+                    },
+                },
+            },
+            {
+                insertText: {
+                    objectId: contentBoxId,
+                    text: slideData.content.map(line => `• ${line}`).join("\n"),
+                },
+            },
+        ];
+
+        await slides.presentations.batchUpdate({
+            presentationId,
+            requestBody: { requests },
+        });
+    };
+
+    for (let i = 0; i < slidesToUpdate.length; i++) {
+        await updateSlideContent(slidesToUpdate[i], structuredContent[i], i);
     }
 
-    
-    await slides?.presentations?.batchUpdate({
-        presentationId,
-        requestBody: {
-            requests: [{
-                deleteObject: {
-                    objectId: firstSlideId
-                }
-            }]
-        }
-    });
+    const extraSlides = allSlides.slice(structuredContent.length);
+    if (extraSlides.length > 0) {
+        const deleteRequests = extraSlides.map(s => ({
+            deleteObject: { objectId: s.objectId },
+        }));
+        await slides.presentations.batchUpdate({
+            presentationId,
+            requestBody: { requests: deleteRequests },
+        });
+    }
 
     await drive.files.delete({ fileId: uploadedFileId });
 
     try {
-        if (fs.existsSync(pptFilePath)) {
-            fs.unlinkSync(pptFilePath);
-        }
+        if (fs.existsSync(pptFilePath)) fs.unlinkSync(pptFilePath);
     } catch (err) {
-        console.error("Failed to delete local file", err.message);
+        console.error("Failed to delete local file:", err.message);
     }
 
     return `https://docs.google.com/presentation/d/${presentationId}/edit`;
